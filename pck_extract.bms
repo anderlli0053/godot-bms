@@ -1,0 +1,47 @@
+# QuickBMS script to extract Godot Engine PCK v3/v4 archives
+# Tested with Godot 3.x and early 4.x builds
+
+# CLI usage: quickbms pck_extract.bms "PCKNAME.pck" output_directory
+
+getdstring MAGIC 4
+if MAGIC != "GDPC"
+    print "Not a valid Godot PCK file!"
+    cleanexit
+endif
+
+get VERSION long
+get MAJOR long
+get MINOR long
+get REVISION long
+get FORMAT long
+
+get FILE_TABLE_OFFSET longlong
+get FILE_TABLE_SIZE longlong
+
+print "PCK version: %VERSION%  Godot %MAJOR%.%MINOR%"
+print "File table offset: %FILE_TABLE_OFFSET%"
+print "File table size: %FILE_TABLE_SIZE%"
+
+goto FILE_TABLE_OFFSET
+get FILE_COUNT longlong
+print "File count: %FILE_COUNT%"
+
+for i = 0 < FILE_COUNT
+    get PATH_LEN long
+    getdstring PATH PATH_LEN
+    get OFFSET longlong
+    get SIZE longlong
+    
+    # Optional hashes — skip if present (up to 48 bytes maximum)
+    savepos CURPOS
+    get NEXT_OFFSET longlong
+    if NEXT_OFFSET > OFFSET
+        math HASH_SIZE = NEXT_OFFSET
+        math HASH_SIZE -= CURPOS
+        goto NEXT_OFFSET
+    else
+        goto CURPOS
+    endif
+
+    log PATH OFFSET SIZE
+next i
