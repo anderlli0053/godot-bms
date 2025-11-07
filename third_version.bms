@@ -1,0 +1,57 @@
+# QuickBMS script auto-generated for this PCK (heuristic layout)
+getdstring MAGIC 4
+if MAGIC != "GDPC"
+  print "Not a valid Godot PCK (missing GDPC magic)."
+  cleanexit
+endif
+get VERSION long
+get MAJOR long
+get MINOR long
+get REVISION long
+get FORMAT long
+get FILE_TABLE_OFFSET longlong
+get FILE_TABLE_SIZE longlong
+print "Auto-generated script: trying to parse entries from FILE_TABLE_OFFSET/size"
+goto FILE_TABLE_OFFSET
+get FILE_COUNT longlong
+if FILE_COUNT > 200000
+  print "FILE_COUNT suspiciously large; switching to heuristic scanning mode"
+  math FILE_COUNT = 0
+endif
+# Heuristic loop: try to parse entries until EOF/table_size reached
+math START = FILE_TABLE_OFFSET
+math POS = START
+while 1
+  # read path length (u32) safely
+  get PATH_LEN long
+  if PATH_LEN == 0
+    # sync forward 1 byte and continue
+    math POS = POS + 1
+    goto POS
+  endif
+  if PATH_LEN > 4096
+    print "Large PATH_LEN encountered -> aborting"
+    cleanexit
+  endif
+  getdstring PATH PATH_LEN
+  get OFFSET longlong
+  get SIZE longlong
+  # attempt to consume optional hashes (up to 48 bytes); if those bytes look ASCII we roll back
+  savepos POS_AFTER_META
+  getbytes META 48
+  math ZEROCOUNT = 0
+  for z = 0 < 48
+    getb B
+    if B == 0
+      math ZEROCOUNT = ZEROCOUNT + 1
+    endif
+  next z
+  if ZEROCOUNT < 8
+    restorepos POS_AFTER_META
+  endif
+  log PATH OFFSET SIZE
+  # update POS for next iteration
+  savepos POS
+  getbytes SKIP 1
+  restorepos POS
+endwhile
