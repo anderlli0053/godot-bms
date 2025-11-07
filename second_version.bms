@@ -1,0 +1,99 @@
+# QuickBMS script to extract Godot PCK (v3/v4/v5 heuristics) — works with PCKs bundled next to an exe
+# Notes:
+#  - Tries to read the file table offset from the header.
+#  - If file_count looks unreasonable, it will stop gracefully.
+#  - If some PCKs include per-file hashes, those bytes are skipped (they are not required to extract).
+#  - You may need to tweak PATH_LEN max check if you see many false positives.
+
+getdstring MAGIC 4
+if MAGIC != "GDPC"
+    print "Not a valid Godot PCK (missing GDPC magic)."
+    cleanexit
+endif
+
+get VERSION long
+get MAJOR long
+get MINOR long
+get REVISION long
+get FORMAT long
+
+# Often next two qwords are alignment / table_offset / table_size
+get FILE_TABLE_OFFSET longlong
+get FILE_TABLE_SIZE   longlong
+
+print "PCK header:"
+print "  VERSION = %VERSION%  GODOT = %MAJOR%.%MINOR%"
+print "  FILE_TABLE_OFFSET = %FILE_TABLE_OFFSET%  FILE_TABLE_SIZE = %FILE_TABLE_SIZE%"
+
+# Safety: if FILE_TABLE_OFFSET points beyond the file, clamp to 0 and continue scanning
+# (quickbms has a builtin variable 'filesize')
+math TMP1 = FILE_TABLE_OFFSET
+math TMP2 = filesize
+if TMP1 > TMP2
+    print "Warning: header offset beyond filesize -> switching to heuristic scan from 0x70"
+    # some PCKs put table near 0x70; start there
+    math FILE_TABLE_OFFSET = 112
+endif
+
+# go to the table area and try to read a uint64 file count
+goto FILE_TABLE_OFFSET
+get FILE_COUNT longlong
+print "Reported FILE_COUNT = %FILE_COUNT%"
+
+# Safety: if FILE_COUNT looks absurd, limit it
+# (We choose 100000 as absolute hard cap for safety)
+if FILE_COUNT > 100000
+    print "FILE_COUNT seems too large; aborting table parse to avoid infinite loops."
+    cleanexit
+endif
+
+# Standard file table parsing loop
+for i = 0 < FILE_COUNT
+    get PATH_LEN long
+    # sanity check on path length
+    if PATH_LEN == 0
+        # some entries can have zero path_len; skip gracefully
+        math SKIP = 0
+        # create an empty name and skip offsets
+        getdstring TMP_PATH 1
+        get OFFSET longlong
+        get SIZE longlong
+        log "unnamed_entry_%i" OFFSET SIZE
+        next i
+    endif
+
+    # sanity guard: avoid absurd lengths
+    if PATH_LEN > 4096
+        print "Path length too large (%PATH_LEN%), aborting table loop (sync lost)."
+        math i = FILE_COUNT
+        break
+    endif
+
+    getdstring PATH PATH_LEN
+    get OFFSET longlong
+    get SIZE longlong
+
+    # Skip/consume up to 48 bytes of possible hashes or extra metadata if present.
+    # We attempt to peek ahead at next 48 bytes and treat them as optional: md5 (16) + sha256 (32).
+    savepos POS_AFTER_META
+    # try to read 48 bytes but don't crash if not available
+    getbytes META 48
+    # heuristics: if META starts with ASCII (rare), we assume there are no hashes and revert
+    # If META looks like binary, we keep it as consumed.
+    # Very simple heuristic: if more than half bytes are zero, it's likely metadata/hashes -> keep
+    math ZEROCOUNT = 0
+    for z = 0 < 48
+        getb B
+        if B == 0
+            math ZEROCOUNT = ZEROCOUNT + 1
+        endif
+    next z
+    # revert to saved pos if META looks like ASCII text (low zero count)
+    if ZEROCOUNT < 8
+        restorepos POS_AFTER_META
+    endif
+
+    log PATH OFFSET SIZE
+next i
+
+# If we reached here we parsed listed entries; QuickBMS will extract using the logged info automatically.
